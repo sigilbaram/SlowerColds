@@ -2,6 +2,7 @@
 using BepInEx.Configuration;
 using BepInEx.Logging;
 using HarmonyLib;
+using UnityEngine;
 
 namespace SlowerColds
 {
@@ -14,19 +15,24 @@ namespace SlowerColds
 
         internal static ManualLogSource Log;
 
-        public static ConfigEntry<float> checkFrequency;
+        public static ConfigEntry<int> coldFrequency;
+        public static ConfigEntry<int> coldMinTime;
         public static ConfigEntry<float> coldChance;
-        public static ConfigEntry<float> coldMinTime;
+        public static ConfigEntry<int> freezingFrequency;
+        public static ConfigEntry<int> freezingMinTime;
         public static ConfigEntry<float> freezingChance;
-        public static ConfigEntry<float> freezingMinTime;
 
         internal void Awake()
         {
-            checkFrequency = Config.Bind("Time", "Check Frequence", 0.2f, new ConfigDescription("How often to check (in game hours)", new AcceptableValueRange<float>(1f / 150f, 1f)));
-            coldChance = Config.Bind("Need: Cold", "Chance", 0.085f, new ConfigDescription("Chance during Cold", new AcceptableValueRange<float>(0f, 1f)));
-            coldMinTime = Config.Bind("Need: Cold", "Min Time", 1f, new ConfigDescription("Minimum time during Cold", new AcceptableValueRange<float>(1f / 150f, 1f)));
-            freezingChance = Config.Bind("Need: Very Cold", "Chance", 0.17f, new ConfigDescription("Chance during Very Cold", new AcceptableValueRange<float>(0f, 1f)));
-            freezingMinTime = Config.Bind("Need: Very Cold", "Min Time", 0f, new ConfigDescription("Minimum time during Very Cold", new AcceptableValueRange<float>(1f / 150f, 1f)));
+            Log = this.Logger;
+
+            coldChance = Config.Bind("Need: Cold", "Chance", 9f, new ConfigDescription("Chance during Cold", new AcceptableValueRange<float>(0f, 100f)));
+            coldMinTime = Config.Bind("Need: Cold", "Min Time", 30, new ConfigDescription("Minimum time during Cold (sec)", new AcceptableValueRange<int>(0, 150)));
+            coldFrequency = Config.Bind("Need: Cold", "Check Frequence", 30, new ConfigDescription("How often to check during Cold (sec)", new AcceptableValueRange<int>(1, 150)));
+
+            freezingChance = Config.Bind("Need: Very Cold", "Chance", 18f, new ConfigDescription("Chance during Very Cold", new AcceptableValueRange<float>(0f, 100f)));
+            freezingMinTime = Config.Bind("Need: Very Cold", "Min Time", 0, new ConfigDescription("Minimum time during Very Cold (sec)", new AcceptableValueRange<int>(0, 150)));
+            freezingFrequency = Config.Bind("Need: Very Cold", "Check Frequence", 15, new ConfigDescription("How often to check during Very Cold (sec)", new AcceptableValueRange<int>(1, 150)));
 
             new Harmony(GUID).PatchAll();
         }
@@ -36,29 +42,58 @@ namespace SlowerColds
         {
             static bool Prefix(PlayerCharacterStats __instance)
             {
+                Character m_character = __instance.m_character;
+
                 StatusEffectFamily diseaseFamily = DiseaseLibrary.Instance.GetDiseaseFamily(Diseases.Cold);
-                if (__instance.m_character.StatusEffectMngr.HasStatusEffect(diseaseFamily))
+                if (m_character.StatusEffectMngr.HasStatusEffect(diseaseFamily))
                 {
                     return false;
                 }
 
-                if (EnvironmentConditions.GameTimeF - __instance.m_lastColdCheckGameTime >= checkFrequency.Value && __instance.m_character.StatusEffectMngr.HasStatusEffect("ColdExposure"))
+                if (m_character.StatusEffectMngr.HasStatusEffect("ColdExposure"))
                 {
-                    __instance.m_lastColdCheckGameTime = EnvironmentConditions.GameTimeF;
-                    StatusEffect coldExposure = __instance.m_character.StatusEffectMngr.GetStatusEffectOfName("ColdExposure");
-                    if (coldExposure != null && coldExposure.Age >= coldMinTime.Value && UnityEngine.Random.Range(0f, 100f) <= coldChance.Value)
+                    StatusEffect coldExposure = m_character.StatusEffectMngr.GetStatusEffectOfName("ColdExposure");
+                    if (coldExposure != null && coldExposure.Age >= coldMinTime.Value)
                     {
-                        DiseaseLibrary.Instance.AddDiseaseToCharacter(__instance.m_character, Diseases.Cold, null);
+                        if (__instance.m_lastColdCheckGameTime > coldExposure.Age)
+                        {
+                            __instance.m_lastColdCheckGameTime = 0f;
+                        }
+
+                        bool firstCheck = __instance.m_lastColdCheckGameTime <= 0f && coldExposure.Age < coldFrequency.Value + coldMinTime.Value;
+                        bool nextCheck = coldExposure.Age > __instance.m_lastColdCheckGameTime + coldFrequency.Value;
+                        if ( firstCheck || nextCheck )
+                        {
+                            __instance.m_lastColdCheckGameTime = coldExposure.Age;
+                            if (UnityEngine.Random.Range(0f, 100f) <= coldChance.Value)
+                            {
+                                DiseaseLibrary.Instance.AddDiseaseToCharacter(m_character, Diseases.Cold, null);
+                                __instance.m_lastColdCheckGameTime = 0f;
+                            }
+                        }
                     }
                 }
-
-                if (EnvironmentConditions.GameTimeF - __instance.m_lastColdCheckGameTime >= checkFrequency.Value && __instance.m_character.StatusEffectMngr.HasStatusEffect("Freezing"))
+                else if (m_character.StatusEffectMngr.HasStatusEffect("Freezing"))
                 {
-                    __instance.m_lastColdCheckGameTime = EnvironmentConditions.GameTimeF;
-                    StatusEffect freezing = __instance.m_character.StatusEffectMngr.GetStatusEffectOfName("Freezing");
-                    if (freezing != null && freezing.Age >= freezingMinTime.Value && UnityEngine.Random.Range(0f, 100f) <= freezingChance.Value)
+                    StatusEffect freezing = m_character.StatusEffectMngr.GetStatusEffectOfName("Freezing");
+                    if (freezing != null && freezing.Age >= freezingMinTime.Value)
                     {
-                        DiseaseLibrary.Instance.AddDiseaseToCharacter(__instance.m_character, Diseases.Cold, null);
+                        if (__instance.m_lastColdCheckGameTime > freezing.Age)
+                        {
+                            __instance.m_lastColdCheckGameTime = 0f;
+                        }
+
+                        bool firstCheck = __instance.m_lastColdCheckGameTime <= 0f && freezing.Age < freezingFrequency.Value + freezingMinTime.Value;
+                        bool nextCheck = freezing.Age > __instance.m_lastColdCheckGameTime + freezingFrequency.Value;
+                        if (firstCheck || nextCheck)
+                        {
+                            __instance.m_lastColdCheckGameTime = freezing.Age;
+                            if (UnityEngine.Random.Range(0f, 100f) <= freezingChance.Value)
+                            {
+                                DiseaseLibrary.Instance.AddDiseaseToCharacter(m_character, Diseases.Cold, null);
+                                __instance.m_lastColdCheckGameTime = 0f;
+                            }
+                        }
                     }
                 }
 
